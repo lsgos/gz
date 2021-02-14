@@ -24,7 +24,9 @@ class PoseVAE(nn.Module):
                  decoder,
                  z_dim, kwargs_encoder,
                  kwargs_decoder, transforms,
-                 use_cuda):
+                 use_cuda,
+                 pixel_likelihood = 'bernoulli',
+                 ):
         super().__init__()
         self.encoder = encoder(**kwargs_encoder)
         self.decoder = decoder(**kwargs_decoder)
@@ -33,6 +35,7 @@ class PoseVAE(nn.Module):
         self.use_cuda = use_cuda
         self.z_dim = z_dim
         self.transforms = transforms
+        self.pixel_likelihood = pixel_likelihood
 
     def model(self,
               data):
@@ -85,8 +88,14 @@ class PoseVAE(nn.Module):
             transformed_view = T.broadcasting_grid_sample(view, transform_grid)
 
             # view from decoder outputs an image
-            pyro.sample(
-                "pixels", D.Bernoulli(transformed_view).to_event(3), obs=data)
+            if self.pixel_likelihood == 'bernoulli':
+                pyro.sample(
+                    "pixels", D.Bernoulli(transformed_view).to_event(3), obs=data)
+            elif self.pixel_likelihood == 'laplace':
+                pyro.sample(
+                      "pixels", D.Laplace(transformed_view, 0.5).to_event(3), obs=data)
+            else:
+                raise NotImplementedError(f"Unimplemented pixel likelihood {self.pixel_likelihood}")
 
     def guide(self, data):
         """

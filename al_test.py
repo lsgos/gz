@@ -1,7 +1,8 @@
 import math
+from collections import namedtuple
 import numpy as np
 import importlib
-from tqdm.auto import tqdm
+# from tqdm.auto import tqdm
 import torch
 from torch import nn as nn
 from torch.nn import functional as F
@@ -11,6 +12,7 @@ from kornia.augmentation import RandomRotation
 from construct_vae import PoseVAE
 from sacred import Experiment
 from pyro.infer import Trace_ELBO
+import pyro
 from utils.load_gz_data import (
     Gz2_data,
 )  # , return_data_loader, return_subset, return_ss_loader
@@ -44,21 +46,23 @@ def config():
     img_file = "/scratch-ssd/oatml/data/gz2"
     load_checkpoint = False
     lr = 1.0e-4
-    supervised_proportion = 1200
     arch_classifier = "neural_networks/classifier_fc.py"
     arch_vae = "neural_networks/encoder_decoder.py"
     test_proportion = 0.1
-    z_size = 100
+    z_size = 128
     bar_no_bar = False
     batch_size = 10
     crop_size = 128
-    
+    use_subset = False 
     split_early = False
     use_pose_encoder = True # should also add an option to use a pretrained model
+    classify_from_z = False
     pretrain_epochs = 50
     transform_spec = ["Rotation"]
     dataset = "FashionMNIST"
     img_size = 32 if dataset == "FashionMNIST" else 128
+    acquisition = "BALD"
+    pixel_likelihood= 'laplace'
 
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):
@@ -95,7 +99,7 @@ class MikeCNN(
             return nn.Sequential(
                 nn.Conv2d(i, o, kernel_size=3, padding=1),
                 nn.ReLU(),
-                consistent_mc_dropout.ConsistentMCDropout2d(),
+                consistent_mc_dropout.ConsistentMCDropout2d(p=0.0),
             )
 
         self.body = nn.Sequential(
@@ -106,22 +110,32 @@ class MikeCNN(
             make_conv(32, 32),
             nn.MaxPool2d(2),  # 32
             make_conv(32, 16),
+            nn.MaxPool2d(2),  # 16
             make_conv(16, 16),
+            nn.MaxPool2d(2),  # 8
             nn.Flatten(-3, -1),
-            nn.Linear(16 * 32 * 32, 128),
+            nn.Linear(16 * 8 * 8, 128),
             consistent_mc_dropout.ConsistentMCDropout(),
             nn.Linear(128, nc),
-            nn.LogSoftmax(-1)
         )
 
     def mc_forward_impl(self, x):
         return self.body(x)
 
-
-# TODO: enable dataset switching?
-# TODO: add support for mikes cnn
-# TODO: add support for actual galaxy zoo.
-
+class FCNN(consistent_mc_dropout.BayesianModule):
+    def __init__(self, ni, nc, n_hid = 256):
+        super().__init__()
+        self.body = nn.Sequential(
+                nn.Linear(ni,n_hid),
+                consistent_mc_dropout.ConsistentMCDropout(),
+                nn.ReLU(),
+                nn.Linear(n_hid, n_hid),
+                consistent_mc_dropout.ConsistentMCDropout(),
+                nn.ReLU(),
+                nn.Linear(n_hid, nc)
+        )
+    def mc_forward_impl(self, x):
+        return self.body(x)
 
 @ex.capture
 def get_datasets(dataset):
@@ -170,7 +184,7 @@ def get_fashionMNIST():
 
 @ex.capture
 def get_model(
-    arch_classifier, arch_vae, transform_spec, split_early, z_size, img_size, cuda
+    arch_classifier, arch_vae, transform_spec, split_early, z_size, img_size, cuda, classify_from_z, pixel_likelihood
 ):
     ### loading classifier network
     spec = importlib.util.spec_from_file_location("module.name", arch_classifier)
@@ -188,7 +202,7 @@ def get_model(
     encoder_args = {"transformer": transformer, "insize": img_size, "z_dim": z_size}
     decoder_args = {"z_dim": z_size, "outsize": img_size}
     vae = PoseVAE(
-        Encoder, Decoder, z_size, encoder_args, decoder_args, transforms, use_cuda=cuda
+        Encoder, Decoder, z_size, encoder_args, decoder_args, transforms, use_cuda=cuda, pixel_likelihood=pixel_likelihood
     )
 
     if split_early:
@@ -205,7 +219,7 @@ def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_propor
         False: [
             "t01_smooth_or_features_a01_smooth_count",
             "t01_smooth_or_features_a02_features_or_disk_count",
-            "t01_smooth_or_features_a03_star_or_artifact_count",
+            # "t01_smooth_or_features_a03_star_or_artifact_count", # simply ignore this answer - Mike did
         ],
         True: [
             "t03_bar_a06_bar_count",
@@ -230,11 +244,17 @@ def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_propor
     return train_set, test_set
 
 @ex.capture
-def get_classification_model(dataset, bar_no_bar):
-    if dataset == "FashionMNIST":
+def get_classification_model(dataset, bar_no_bar, z_size, classify_from_z):
+    if dataset == "FashionMNIST" and not classify_from_z:
         return BayesianCNN()
+    if dataset == "FashionMNIST" and classify_from_z:
+        raise NotImplementedError
     else:
-        return MikeCNN(2 if bar_no_bar else 3)
+        if classify_from_z:
+            return FCNN(z_size, 2)
+        return MikeCNN(2)
+
+
 
 
 def multinomial_loss(logits, observations, reduction="mean"):
@@ -255,17 +275,43 @@ def get_classification_loss(dataset):
     else:
         return F.nll_loss
 
+@ex.capture
+def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
+    """
+    depending on the configuration, either just normalise the data, or pass it through a VAE or similar
+    """
+
+    if use_pose_encoder: # could replace this with a configurable function
+        enc_output, _ = vae.encoder(data)  # TODO visualise
+        if classify_from_z:
+            data = enc_output["z_mu"] # technically ought to average here but this will do for now
+        else:
+            data = enc_output["view"]  # learned transform of the data.
+    else:
+        data = data - 0.222 # lol this complicates switching datasets severely
+        data = data / 0.156
+    return data
 
 
 @ex.automain
-def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
+def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, use_subset, _seed, _run):
 
+    pyro.set_rng_seed(_seed)
+    torch.manual_seed(_seed)
+    np.random.seed(_seed)
+    # torch.set_deterministic(True)
+    torch.backends.cudnn.benchmark = False
+    print(_seed)
     train_dataset, test_dataset = get_datasets()
+    assert acquisition in {"BALD", "random"}, f"Unknown acquisition {acquisition}"
 
 
     # sanity for initial training
-    train_dataset = torch.utils.data.Subset(train_dataset, torch.arange(10000))
-    num_initial_samples = 20
+    if use_subset:
+        # purely for iteration purposes, train on a manageable subset of the data
+        train_dataset = torch.utils.data.Subset(train_dataset, torch.arange(60000))
+
+    num_initial_samples = 512 if bar_no_bar else 256
     num_classes = 10
 
     # TODO going to have to change this for galaxy zoo in all likelihood but it will do for now
@@ -273,8 +319,8 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
         # in this case getting initial samples is slightly complicated by the fact that galaxy zoo does not have
         # strict labels. 
         # Compromise by balancing as though the arg-max of the votes is a label, which should be a pretty good proxy.
-        labels = [x['data'].argmax() for x in train_dataset]
-        num_classes = 2 if bar_no_bar else 3
+        labels = [x['data'].argmax(-1) for x in train_dataset]
+        num_classes = 2 #  if bar_no_bar else 3
         initial_samples = active_learning.get_balanced_sample_indices(
             labels,
             num_classes=num_classes,
@@ -287,16 +333,16 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
             n_per_digit=num_initial_samples / num_classes,
         )
 
-    max_training_samples = 150
-    acquisition_batch_size = 5
-    num_inference_samples = 25
-    num_test_inference_samples = 5
-    num_samples = 100000
+    max_training_samples = 5000
+    acquisition_batch_size = 256 if bar_no_bar else 128
+    num_inference_samples = 5
+    num_test_inference_samples = 25
+    # num_samples = 100000
 
-    test_batch_size = 128
+    test_batch_size = 32
     batch_size = 64
     scoring_batch_size = 32
-    training_iterations = 4096 * 6
+    training_iterations = 4096 * 16
 
     use_cuda = torch.cuda.is_available()
 
@@ -314,9 +360,6 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
 
     # Split off the initial samples first.
     active_learning_data.acquire(initial_samples)
-
-    # THIS REMOVES MOST OF THE POOL DATA. UNCOMMENT THIS TO TAKE ALL UNLABELLED DATA INTO ACCOUNT!
-    # active_learning_data.extract_dataset_from_pool(40000)
 
     train_loader = torch.utils.data.DataLoader(
         active_learning_data.training_dataset,
@@ -337,15 +380,16 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
     # Run experiment
     test_accs = []
     test_loss = []
+    test_rmse = []
     added_indices = []
 
-    pbar = tqdm(
-        initial=len(active_learning_data.training_dataset),
-        total=max_training_samples,
-        desc="Training Set Size",
-    )
+    # pbar = tqdm(
+    #     initial=len(active_learning_data.training_dataset),
+    #     total=max_training_samples,
+    #     desc="Training Set Size",
+    # )
 
-    vae, clf = get_model()
+    vae, _ = get_model()
     vae_opt = torch.optim.Adam(vae.parameters(), lr=1e-4)
     vae_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
@@ -373,45 +417,25 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
                 lb.append(loss.item())
             print("pretrain epoch", e, "average loss", np.mean(lb))
     print("done pretraining")
+    
 
     # todo want a switch on BayesianCNN / PoseVAE here.
-
+    first = True
+    model = get_classification_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    loss_fn = get_classification_loss()
+    model.cuda()
+    model.train()
     while True:
-        model = get_classification_model()
-        optimizer = torch.optim.Adam(model.parameters())
-        loss_fn = get_classification_loss()
-        model.cuda()
-        model.train()
 
         # Train
-        for batch in tqdm(train_loader, desc="Training", leave=False):
+        first = False
+        n_repeats = 3 if first else 1
+        lb = []
+        model.train()
+        for _ in range(n_repeats):
+            for batch in train_loader:
 
-            if isinstance(batch, dict):
-                data = batch['image']
-                target = batch['data']
-
-            else:
-                data, target = batch
-
-            data = data.to(device=device)
-            target = target.to(device=device)
-            if use_pose_encoder: # could replace this with a configurable function
-                enc_output, _ = vae.encoder(data)  # TODO visualise
-                data = enc_output["view"]  # learned transform of the data.
-            optimizer.zero_grad()
-
-            prediction = model(data, 1).squeeze(1)
-            # loss = F.nll_loss(prediction, target)
-            loss = loss_fn(prediction, target)
-
-            loss.backward()
-            optimizer.step()
-
-        # Test
-        loss = 0
-        correct = 0
-        with torch.no_grad():
-            for batch in tqdm(test_loader, desc="Testing", leave=False):
                 if isinstance(batch, dict):
                     data = batch['image']
                     target = batch['data']
@@ -421,85 +445,150 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar):
 
                 data = data.to(device=device)
                 target = target.to(device=device)
-                if use_pose_encoder:
-                    enc_output, _ = vae.encoder(data)  # TODO visualise
-                    data = enc_output["view"]  # learned transform of the data.
+                data = preprocess_batch(data, vae)
 
+                optimizer.zero_grad()
+
+                prediction = model(data, 1).squeeze(1)
+                # loss = F.nll_loss(prediction, target)
+                if prediction.shape[0] != target.shape[0]:
+                    breakpoint()
+                loss = loss_fn(prediction, target)
+                # TODO juts sanity 
+                # fake_target = target.float() / target.sum(-1, keepdim=True)
+                # loss = ((prediction - fake_target) **2).mean()
+
+                lb.append(loss.item())
+                # also record running training loss as a sanity check
+                if len(lb) % 100 == 0:
+                    _run.log_scalar('train.loss_running', np.mean(lb[-100:]))
+                loss.backward()
+
+                optimizer.step()
+        # print('train loss:',  np.mean(lb)) 
+        _run.log_scalar('train.loss', np.mean(lb))
+        # Test
+        loss = 0
+        correct = 0
+        rmse = 0
+        with torch.no_grad():
+            for batch in test_loader:
+                if isinstance(batch, dict):
+                    data = batch['image']
+                    target = batch['data']
+
+                else:
+                    data, target = batch
+
+                data = data.to(device=device)
+                target = target.to(device=device)
+
+                data = preprocess_batch(data, vae)
+
+                log_preds = F.log_softmax(model(data, num_test_inference_samples), -1)
                 prediction = torch.logsumexp(
-                    model(data, num_test_inference_samples), dim=1
+                    log_preds, dim=1
                 ) - math.log(num_test_inference_samples)
                 # loss += F.nll_loss(prediction, target, reduction="sum")
-                loss += loss_fn(prediction, target, reduction="sum")
+                loss += loss_fn(prediction, target, reduction="sum").item()
 
-                prediction = prediction.max(1)[1]
+                class_pred = prediction.max(1)[1]
                 if len(target.shape) > 1:
-                    target = target.argmax(-1)
-                correct += prediction.eq(target.view_as(prediction)).sum().item()
+                    class_true = target.argmax(-1)
+                correct += class_pred.eq(class_true.view_as(class_pred)).sum().item()
 
+                # calculate RMSE between predictions and target.
+                emp_probs = target / target.sum(-1, keepdim=True)
+                pred_prob = torch.softmax(prediction, -1)
+                # NB: can easily show that this differs from calculating the RMSE over
+                # a single binomial prob by a factor of sqrt(2).
+                # unclear which one mike used but his numbers don't appear to be directly comparable anyway...
+                rmse += ((emp_probs - pred_prob) **2 ).mean(-1).sqrt().sum().item()
+
+
+        # double check scaling here.
         loss /= len(test_loader.dataset)
         test_loss.append(loss)
 
         percentage_correct = 100.0 * correct / len(test_loader.dataset)
         test_accs.append(percentage_correct)
 
+        rmse = rmse / len(test_loader.dataset)
+        test_rmse.append(rmse)
+
+        assert type(loss) == float # double check these aren't torch tensors - this screws up storage
+        assert type(rmse) == float
+        _run.log_scalar("test.average_loss", loss)
+        _run.log_scalar("test.average_accuracy", percentage_correct)
+        _run.log_scalar("test.rmse", rmse) ## todo double check how these are calculated.
+
         print(
-            "Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)".format(
-                loss, correct, len(test_loader.dataset), percentage_correct
+            "Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%), Average rmse: {:.4f}".format(
+                loss, correct, len(test_loader.dataset), percentage_correct, rmse
             )
         )
 
         if len(active_learning_data.training_dataset) >= max_training_samples:
             break
 
-        # Acquire pool predictions
         N = len(active_learning_data.pool_dataset)
-        logits_N_K_C = torch.empty(
-            (N, num_inference_samples, num_classes),
-            dtype=torch.double,
-            pin_memory=use_cuda,
-        )
-
-        with torch.no_grad():
-            model.eval()
-
-            for i, batch in enumerate(
-                tqdm(pool_loader, desc="Evaluating Acquisition Set", leave=False)
-            ):
-
-                if isinstance(batch, dict):
-                    data = batch['image']
-                else:
-                    data = batch[0]
-
-                data = data.to(device=device)
-                if use_pose_encoder:
-                    enc_output, _ = vae.encoder(data)  # TODO visualise
-                    data = enc_output["view"]  # learned transform of the data.
-
-                lower = i * pool_loader.batch_size
-                upper = min(lower + pool_loader.batch_size, N)
-                logits_N_K_C[lower:upper].copy_(
-                    model(data, num_inference_samples).double(), non_blocking=True
-                )
-
-        with torch.no_grad():
-            candidate_batch = batchbald.get_bald_batch(
-                logits_N_K_C,
-                acquisition_batch_size,
-                # num_samples,#
+        if acquisition != "random":
+            logits_N_K_C = torch.empty(
+                (N, num_inference_samples, num_classes),
                 dtype=torch.double,
-                device=device,
+                pin_memory=use_cuda,
+            )
+
+            with torch.no_grad():
+                model.eval()
+
+                for i, batch in enumerate(
+                    pool_loader
+                ):
+
+                    if isinstance(batch, dict):
+                        data = batch['image']
+                    else:
+                        data = batch[0]
+
+                    data = data.to(device=device)
+                
+                    data = preprocess_batch(data, vae)
+
+                    lower = i * pool_loader.batch_size
+                    upper = min(lower + pool_loader.batch_size, N)
+                    logits_N_K_C[lower:upper].copy_(
+                        F.log_softmax(model(data, num_inference_samples).double(), -1), non_blocking=True
+                    )
+
+            with torch.no_grad():
+                candidate_batch = batchbald.get_bald_batch(
+                    logits_N_K_C,
+                    acquisition_batch_size,
+                    # num_samples,#
+                    dtype=torch.double,
+                    device=device,
+                )
+                dataset_indices = active_learning_data.get_dataset_indices(
+                    candidate_batch.indices
+                )
+        else:
+            # random batch
+            indices = torch.randperm(N)[:acquisition_batch_size]
+            candidate_batch = namedtuple('Batch','indices')(indices)
+            dataset_indices = active_learning_data.get_dataset_indices(
+                candidate_batch.indices
             )
 
         # targets = repeated_mnist.get_targets(active_learning_data.pool_dataset)
-        dataset_indices = active_learning_data.get_dataset_indices(
-            candidate_batch.indices
-        )
 
         print("Dataset indices: ", dataset_indices)
-        print("Scores: ", candidate_batch.scores)
+        if acquisition != "random":
+            print("Scores: ", candidate_batch.scores)
         # print("Labels: ", targets[candidate_batch.indices])
 
         active_learning_data.acquire(candidate_batch.indices)
         added_indices.append(dataset_indices)
-        pbar.update(len(dataset_indices))
+        # pbar.update(len(dataset_indices))
+    # TODO then after that, sanity the pose encoder a bit.
+    # TODO add support for preloading instead of training the VAE inline
