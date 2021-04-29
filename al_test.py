@@ -294,7 +294,7 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
 
 
 @ex.automain
-def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, use_subset, _seed, _run):
+def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, use_subset, _seed, _run):
 
     pyro.set_rng_seed(_seed)
     torch.manual_seed(_seed)
@@ -390,7 +390,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, us
     # )
 
     vae, _ = get_model()
-    vae_opt = torch.optim.Adam(vae.parameters(), lr=1e-4)
+    vae_opt = torch.optim.Adam(vae.parameters(), lr=lr)
     vae_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
     )
@@ -470,7 +470,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, us
         # Test
         loss = 0
         correct = 0
-        rmse = 0
+        mse = 0
         with torch.no_grad():
             for batch in test_loader:
                 if isinstance(batch, dict):
@@ -485,12 +485,12 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, us
 
                 data = preprocess_batch(data, vae)
 
+                model_out = model(data, num_test_inference_samples)
                 log_preds = F.log_softmax(model(data, num_test_inference_samples), -1)
                 prediction = torch.logsumexp(
                     log_preds, dim=1
                 ) - math.log(num_test_inference_samples)
                 # loss += F.nll_loss(prediction, target, reduction="sum")
-                loss += loss_fn(prediction, target, reduction="sum").item()
 
                 class_pred = prediction.max(1)[1]
                 if len(target.shape) > 1:
@@ -499,12 +499,13 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, us
 
                 # calculate RMSE between predictions and target.
                 emp_probs = target / target.sum(-1, keepdim=True)
-                pred_prob = torch.softmax(prediction, -1)
-                # NB: can easily show that this differs from calculating the RMSE over
-                # a single binomial prob by a factor of sqrt(2).
-                # unclear which one mike used but his numbers don't appear to be directly comparable anyway...
-                rmse += ((emp_probs - pred_prob) **2 ).mean(-1).sqrt().sum().item()
 
+                pred_prob = torch.exp(prediction)
+                loss += D.Multinomial(probs=pred_prob).log_prob(target).sum().item()
+                assert emp_probs.shape[-1] == 2
+                ep = emp_probs[..., 0]
+                pp = pred_prob[..., 0]
+                mse += ((ep - pp) **2).sum().item()
 
         # double check scaling here.
         loss /= len(test_loader.dataset)
@@ -513,8 +514,10 @@ def main(use_pose_encoder, pretrain_epochs, dataset, bar_no_bar, acquisition, us
         percentage_correct = 100.0 * correct / len(test_loader.dataset)
         test_accs.append(percentage_correct)
 
-        rmse = rmse / len(test_loader.dataset)
+        mse = mse / len(test_loader.dataset)
+        rmse = math.sqrt(mse)
         test_rmse.append(rmse)
+
 
         assert type(loss) == float # double check these aren't torch tensors - this screws up storage
         assert type(rmse) == float
