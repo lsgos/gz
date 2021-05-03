@@ -7,7 +7,7 @@ import torchvision as tv
 
 class Gz2_data(torch.utils.data.Dataset):
     def __init__(self, csv_dir, image_dir, list_of_interest, faulty_data_set=False, crop=180,
-                 resize=128, transforms=None, one_hot_categorical=False):
+                 resize=128, transforms=None, one_hot_categorical=False, data_aug=False):
         self.csv_dir = csv_dir
         self.faulty_data_set = faulty_data_set
         self.image_dir = image_dir
@@ -39,11 +39,18 @@ class Gz2_data(torch.utils.data.Dataset):
 
         data = self.file.iloc[idx][self.list_of_interest]
         data = torch.tensor(data.values.astype('float'))
-        transforms = tv.transforms.Compose(
+        if data_aug:
+            transforms = tv.transforms.Compose(
             [tv.transforms.CenterCrop(self.crop),
              tv.transforms.Resize(self.resize), tv.transforms.Grayscale(),
-#             tv.transforms.RandomRotation(180), tv.transforms.RandomAffine(180),
+             tv.transforms.RandomRotation(180), tv.transforms.RandomAffine(180)
              tv.transforms.ToTensor()])
+        else:
+            transforms = tv.transforms.Compose(
+                [tv.transforms.CenterCrop(self.crop),
+                 tv.transforms.Resize(self.resize), tv.transforms.Grayscale(),
+                 #             tv.transforms.RandomRotation(180), tv.transforms.RandomAffine(180),
+                 tv.transforms.ToTensor()])
         if self.one_hot_categorical == True:
             _, indice = data.max(0)
             out = torch.zeros(len(data))

@@ -67,7 +67,9 @@ def config():
     acquisition = "BALD"
     pixel_likelihood= 'laplace'
     spatial_vae = False
-    
+    data_aug = False
+    spatial_transformer=False
+     
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -203,7 +205,7 @@ def get_model(
     spec.loader.exec_module(arch)
     Encoder = arch.Encoder
     Decoder = arch.Decoder
-    transforms, transformer = get_transformations(transform_spec)
+    transforms, transformer = get_transformations(transform_spec, spatial_transformer=spatial_transformer)
     encoder_args = {"transformer": transformer, "insize": img_size, "z_dim": z_size, "spatial_vae": spatial_vae}
     decoder_args = {"z_dim": z_size, "outsize": img_size}
     vae = PoseVAE(
@@ -219,7 +221,7 @@ def get_model(
 
 
 @ex.capture
-def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_proportion):
+def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_proportion, data_aug):
     ans = {
         False: [
             "t01_smooth_or_features_a01_smooth_count",
@@ -238,6 +240,7 @@ def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_propor
         list_of_interest=ans[bar_no_bar],
         crop=img_size,
         resize=crop_size,
+        data_aug=data_aug
     )
 
     len_data = len(data)

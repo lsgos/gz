@@ -47,10 +47,16 @@ TRANSFORMER_STRING_MAP = {
 }
 
 
-def get_transformations(transform_spec):
-    transformer = transformers.TransformerSequence(
-        *[TRANSFORMER_STRING_MAP[trans_name](networks.EquivariantPosePredictor, 1, 32) for trans_name in transform_spec]
-    )
+def get_transformations(transform_spec, spatial_transformer=False):
+    if spatial_transformer:
+            transformer = transformers.TransformerSequence(
+                *[TRANSFORMER_STRING_MAP[trans_name](networks.DirectPosePredictor, 1, 32) for trans_name in transform_spec]
+            )
+
+    else:
+        transformer = transformers.TransformerSequence(
+            *[TRANSFORMER_STRING_MAP[trans_name](networks.EquivariantPosePredictor, 1, 32) for trans_name in transform_spec]
+        )
 
     transforms = T.TransformSequence(
         *[TRANSFORM_STRING_MAP[trans_name]() for trans_name in transform_spec]
