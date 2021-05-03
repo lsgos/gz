@@ -33,17 +33,20 @@ from trainer import get_transformations
 
 ex = Experiment()
 
+local_csv_loc = "~/gz2_data/gz_amended.csv"
+local_img_loc = "~/gz2_data/"
+run_local = True
 
 @ex.config
 def config():
     dir_name = "sample_100zs_semi_sup_1200_"
-    cuda = True
+    cuda = False
     num_epochs = 200
     semi_supervised = True
     split_early = False
     subset_proportion = None
-    csv_file = "/scratch-ssd/oatml/data/gz2/gz2_classifications_and_subjects.csv"
-    img_file = "/scratch-ssd/oatml/data/gz2"
+    csv_file = local_csv_loc if run_local else "/scratch-ssd/oatml/data/gz2/gz2_classifications_and_subjects.csv"
+    img_file = local_img_loc if run_local else "/scratch-ssd/oatml/data/gz2"
     load_checkpoint = False
     lr = 1.0e-4
     arch_classifier = "neural_networks/classifier_fc.py"
@@ -51,7 +54,7 @@ def config():
     test_proportion = 0.1
     z_size = 128
     bar_no_bar = False
-    batch_size = 10
+    batch_size = 64
     crop_size = 128
     use_subset = False 
     split_early = False
@@ -59,11 +62,12 @@ def config():
     classify_from_z = False
     pretrain_epochs = 50
     transform_spec = ["Rotation"]
-    dataset = "FashionMNIST"
+    dataset = "gz"
     img_size = 32 if dataset == "FashionMNIST" else 128
     acquisition = "BALD"
     pixel_likelihood= 'laplace'
-
+    spatial_vae = False
+    
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -184,7 +188,8 @@ def get_fashionMNIST():
 
 @ex.capture
 def get_model(
-    arch_classifier, arch_vae, transform_spec, split_early, z_size, img_size, cuda, classify_from_z, pixel_likelihood
+    arch_classifier, arch_vae, transform_spec, split_early, z_size, img_size, cuda,
+        classify_from_z, pixel_likelihood, spatial_vae
 ):
     ### loading classifier network
     spec = importlib.util.spec_from_file_location("module.name", arch_classifier)
@@ -199,7 +204,7 @@ def get_model(
     Encoder = arch.Encoder
     Decoder = arch.Decoder
     transforms, transformer = get_transformations(transform_spec)
-    encoder_args = {"transformer": transformer, "insize": img_size, "z_dim": z_size}
+    encoder_args = {"transformer": transformer, "insize": img_size, "z_dim": z_size, "spatial_vae": spatial_vae}
     decoder_args = {"z_dim": z_size, "outsize": img_size}
     vae = PoseVAE(
         Encoder, Decoder, z_size, encoder_args, decoder_args, transforms, use_cuda=cuda, pixel_likelihood=pixel_likelihood
@@ -345,7 +350,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     training_iterations = 4096 * 16
 
     use_cuda = torch.cuda.is_available()
-
+    use_cuda = False
     print(f"use_cuda: {use_cuda}")
 
     device = "cuda" if use_cuda else "cpu"
@@ -405,7 +410,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                     x = batch['image']
                 else:
                     x = batch[0]
-                x = x.cuda()
+                x = x.to(device=device)
                 vae_opt.zero_grad()
 
                 loss = (

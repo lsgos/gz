@@ -48,7 +48,7 @@ class Transformer(nn.Module):
         self.rescale = rescale
         self.transform = transform
         
-        num_outputs = 2 if (return_u and return_v) else 1
+        self.num_outputs = 2 if (return_u and return_v) else 1
         self.predictor = predictor_cls(
             in_channels=in_channels, 
             nf=nf,
@@ -56,7 +56,7 @@ class Transformer(nn.Module):
             periodic_v=periodic_v,
             return_u=return_u,
             return_v=return_v,
-            num_outputs=num_outputs,
+            num_outputs=self.num_outputs,
             **kwargs)
 
     def transform_from_params(self, params):

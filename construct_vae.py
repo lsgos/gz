@@ -111,7 +111,6 @@ class PoseVAE(nn.Module):
             # gives transform params, z mu and z std
             # pretty standard guide
             encoder_out, split = encoder(data)
-
             delta_sample_transformer_params(
                 encoder.transformer.transformers, encoder_out["transform_params"]
             )
