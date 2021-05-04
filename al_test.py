@@ -191,7 +191,7 @@ def get_fashionMNIST():
 @ex.capture
 def get_model(
     arch_classifier, arch_vae, transform_spec, split_early, z_size, img_size, cuda,
-        classify_from_z, pixel_likelihood, spatial_vae
+        classify_from_z, pixel_likelihood, spatial_vae, spatial_transformer
 ):
     ### loading classifier network
     spec = importlib.util.spec_from_file_location("module.name", arch_classifier)

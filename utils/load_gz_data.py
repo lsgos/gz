@@ -16,7 +16,7 @@ class Gz2_data(torch.utils.data.Dataset):
         self.resize = resize
         self.crop = crop
         self.one_hot_categorical = one_hot_categorical
-        
+        self.data_aug = data_aug
     def __len__(self):
         return len(self.file)
 
@@ -39,11 +39,11 @@ class Gz2_data(torch.utils.data.Dataset):
 
         data = self.file.iloc[idx][self.list_of_interest]
         data = torch.tensor(data.values.astype('float'))
-        if data_aug:
+        if self.data_aug:
             transforms = tv.transforms.Compose(
             [tv.transforms.CenterCrop(self.crop),
              tv.transforms.Resize(self.resize), tv.transforms.Grayscale(),
-             tv.transforms.RandomRotation(180), tv.transforms.RandomAffine(180)
+             tv.transforms.RandomRotation(180), tv.transforms.RandomAffine(180),
              tv.transforms.ToTensor()])
         else:
             transforms = tv.transforms.Compose(
