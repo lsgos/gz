@@ -33,8 +33,8 @@ from trainer import get_transformations
 
 ex = Experiment()
 
-local_csv_loc = "~/gz2_data/gz_amended.csv"
-local_img_loc = "~/gz2_data/"
+local_csv_loc = "~/diss/gz2_data/gz_amended.csv"
+local_img_loc = "~/diss/gz2_data/"
 run_local = True
 
 @ex.config
@@ -56,7 +56,7 @@ def config():
     bar_no_bar = False
     batch_size = 64
     crop_size = 128
-    use_subset = False 
+    use_subset = False
     split_early = False
     use_pose_encoder = True # should also add an option to use a pretrained model
     classify_from_z = False
@@ -69,7 +69,7 @@ def config():
     spatial_vae = False
     data_aug = False
     spatial_transformer=False
-     
+
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -325,7 +325,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     # TODO going to have to change this for galaxy zoo in all likelihood but it will do for now
     if dataset == "gz":
         # in this case getting initial samples is slightly complicated by the fact that galaxy zoo does not have
-        # strict labels. 
+        # strict labels.
         # Compromise by balancing as though the arg-max of the votes is a label, which should be a pretty good proxy.
         labels = [x['data'].argmax(-1) for x in train_dataset]
         num_classes = 2 #  if bar_no_bar else 3
@@ -425,7 +425,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 lb.append(loss.item())
             print("pretrain epoch", e, "average loss", np.mean(lb))
     print("done pretraining")
-    
+
 
     # todo want a switch on BayesianCNN / PoseVAE here.
     first = True
@@ -462,7 +462,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 if prediction.shape[0] != target.shape[0]:
                     breakpoint()
                 loss = loss_fn(prediction, target)
-                # TODO juts sanity 
+                # TODO juts sanity
                 # fake_target = target.float() / target.sum(-1, keepdim=True)
                 # loss = ((prediction - fake_target) **2).mean()
 
@@ -473,7 +473,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 loss.backward()
 
                 optimizer.step()
-        # print('train loss:',  np.mean(lb)) 
+        # print('train loss:',  np.mean(lb))
         _run.log_scalar('train.loss', np.mean(lb))
         # Test
         loss = 0
@@ -563,7 +563,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                         data = batch[0]
 
                     data = data.to(device=device)
-                
+
                     data = preprocess_batch(data, vae)
 
                     lower = i * pool_loader.batch_size
