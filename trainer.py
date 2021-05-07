@@ -9,7 +9,6 @@ import pyro.distributions as D
 from sacred import Experiment
 import torch
 from torch.optim import Adam
-import yaml
 
 from construct_vae import PoseVAE
 from galaxy_gen.etn import transformers, networks
