@@ -62,10 +62,7 @@ def get_transformations(transform_spec, spatial_transformer=False):
     )
     return transforms, transformer
 
-ex = Experiment()
 
-
-@ex.automain
 def main(dir_name, cuda, num_epochs, semi_supervised, split_early,
          subset_proportion, lr, supervised_proportion,
          csv_file, img_file, load_checkpoint, arch_classifier,
