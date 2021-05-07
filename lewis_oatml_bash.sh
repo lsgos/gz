@@ -1,21 +1,21 @@
 #!/bin/bash
 #SBATCH --cpus-per-task=10
 #SBATCH --gres=gpu:1
-#SBATCH --job-name="gz_al"
+#SBATCH --job-name="gz_test"
 #SBATCH --array=39%16
 export CONDA_ENVS_PATH=/scratch-ssd/$USER/conda_envs
 export CONDA_PKGS_DIRS=/scratch-ssd/$USER/conda_pkgs
 export TMPDIR=/scratch/${USER}/tmp
 mkdir -p $TMPDIR
 BUILD_DIR=/scratch-ssd/${USER}/conda_envs/pip-build
-/scratch-ssd/oatml/scripts/run_locked.sh /scratch-ssd/oatml/miniconda3/bin/conda-env update -f gz_mizu.yml
+/scratch-ssd/oatml/run_locked.sh /scratch-ssd/oatml/miniconda3/bin/conda-env update -f gz_mizu.yml
 source /scratch-ssd/oatml/miniconda3/bin/activate gz_mizu
 # manually install a version of this package without the stupid progress bars everywhere.
 pip -e batchbald_redux
 ACQUISITIONS=(random BALD)
-ENCODER=(False True)
-BAR_NO_BAR=(False True)
-N_SEEDS=5
+ENCODER=(True)
+BAR_NO_BAR=(False)
+N_SEEDS=1
 N_ACQUISITIONS=${#ACQUISITIONS[@]}
 N_ENCODER=${#ENCODER[@]}
 N_BAR=${#BAR_NO_BAR[@]}

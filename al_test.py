@@ -30,9 +30,6 @@ from batchbald_redux import (
 
 from trainer import get_transformations
 
-
-ex = Experiment()
-
 local_csv_loc = "~/gz2_data/gz_amended.csv"
 local_img_loc = "~/gz2_data/"
 run_local = False
@@ -66,7 +63,7 @@ def config():
     img_size = 32 if dataset == "FashionMNIST" else 128
     acquisition = "BALD"
     pixel_likelihood= 'laplace'
-    spatial_vae = False
+    spatial_vae = True
     data_aug = False
     spatial_transformer=False
      
@@ -402,9 +399,9 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     vae_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
     )
-
     print("starting pretraining")
     if use_pose_encoder:
+
         # need to pretrain the pose encoder.
         for e in range(pretrain_epochs):
             lb = []
@@ -416,7 +413,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 x = x.cuda()
                 x = x.to(device=device)
                 vae_opt.zero_grad()
-
+ 
                 loss = (
                     Trace_ELBO().differentiable_loss(vae.model, vae.guide, x)
                     / batch_size
