@@ -35,18 +35,18 @@ ex = Experiment()
 
 local_csv_loc = "~/gz2_data/gz_amended.csv"
 local_img_loc = "~/gz2_data/"
-run_local = True
+run_local = False
 
 @ex.config
 def config():
-    dir_name = "sample_100zs_semi_sup_1200_"
-    cuda = False
+    dir_name = "sample_100s_semi_sup_1200_"
+    cuda = True
     num_epochs = 200
     semi_supervised = True
     split_early = False
     subset_proportion = None
-    csv_file = local_csv_loc if run_local else "/scratch-ssd/oatml/data/gz2/gz2_classifications_and_subjects.csv"
-    img_file = local_img_loc if run_local else "/scratch-ssd/oatml/data/gz2"
+    csv_file = local_csv_loc if run_local else "/scratch/oatml/gz2/gz2_classifications_and_subjects.csv"
+    img_file = local_img_loc if run_local else "/scratch/oatml/gz2"
     load_checkpoint = False
     lr = 1.0e-4
     arch_classifier = "neural_networks/classifier_fc.py"
@@ -353,7 +353,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     training_iterations = 4096 * 16
 
     use_cuda = torch.cuda.is_available()
-    use_cuda = False
+    use_cuda = True
     print(f"use_cuda: {use_cuda}")
 
     device = "cuda" if use_cuda else "cpu"
@@ -413,6 +413,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                     x = batch['image']
                 else:
                     x = batch[0]
+                x = x.cuda()
                 x = x.to(device=device)
                 vae_opt.zero_grad()
 
