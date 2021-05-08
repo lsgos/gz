@@ -8,8 +8,8 @@ export CONDA_PKGS_DIRS=/scratch-ssd/$USER/conda_pkgs
 export TMPDIR=/scratch/${USER}/tmp
 mkdir -p $TMPDIR
 BUILD_DIR=/scratch-ssd/${USER}/conda_envs/pip-build
-/scratch-ssd/oatml/run_locked.sh /scratch-ssd/oatml/miniconda3/bin/conda-env update -f gz_mizu.yml
-source /scratch-ssd/oatml/miniconda3/bin/activate gz_mizu
+/scratch-ssd/oatml/run_locked.sh /scratch-ssd/oatml/miniconda3/bin/conda-env update -f gz_mizu_mac.yml
+source /scratch-ssd/oatml/miniconda3/bin/activate gz_mizu_mac
 # manually install a version of this package without the stupid progress bars everywhere.
 pip -e batchbald_redux
 ACQUISITIONS=(random BALD)
