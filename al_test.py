@@ -8,7 +8,6 @@ from torch import nn as nn
 from torch.nn import functional as F
 from torchvision import datasets
 from torchvision import transforms as tvt
-from kornia.augmentation import RandomRotation
 from construct_vae import PoseVAE
 from sacred import Experiment
 from pyro.infer import Trace_ELBO
@@ -46,8 +45,8 @@ def config():
     semi_supervised = True
     split_early = False
     subset_proportion = None
-    csv_file = local_csv_loc if run_local else "/scratch/oatml/gz2/gz2_classifications_and_subjects.csv"
-    img_file = local_img_loc if run_local else "/scratch/oatml/gz2"
+    csv_file = local_csv_loc if run_local else "/scratch/gz2/gz2_classifications_and_subjects.csv"
+    img_file = local_img_loc if run_local else "/scratch/gz2"
     load_checkpoint = False
     lr = 1.0e-4
     arch_classifier = "neural_networks/classifier_fc.py"
@@ -67,9 +66,9 @@ def config():
     img_size = 32 if dataset == "FashionMNIST" else 128
     acquisition = "BALD"
     pixel_likelihood= 'laplace'
-    spatial_vae = True
-    data_aug = False
-    spatial_transformer=False
+    spatial_vae = False
+    data_aug = True
+    spatial_transformer = False
 
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):

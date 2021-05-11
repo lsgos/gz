@@ -17,7 +17,6 @@ from galaxy_gen.etn import transformers, networks
 from galaxy_gen.etn import transforms as T
 from galaxy_gen.etn import coordinates
 
-from kornia import augmentation
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import os

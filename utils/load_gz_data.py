@@ -27,13 +27,13 @@ class Gz2_data(torch.utils.data.Dataset):
             image = None
             while image is None:
                 try:
-                    img_name = os.path.expanduser(os.path.join(self.image_dir, self.file['png_loc'][idx]))
+                    img_name = os.path.join(self.image_dir, self.file['png_loc'][idx])
                     img_name = img_name.replace(".png", ".jpg")
                     image = Image.open(img_name)
                 except FileNotFoundError:
                     idx += 1
         else:
-            img_name = os.path.expanduser(os.path.join(self.image_dir, self.file['png_loc'][idx]))
+            img_name = os.path.join(self.image_dir, self.file['png_loc'][idx])
             img_name = img_name.replace(".png", ".jpg")
             image = Image.open(img_name).convert('L')
 
