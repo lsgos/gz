@@ -2,6 +2,7 @@ import math
 from collections import namedtuple
 import numpy as np
 import importlib
+import os
 # from tqdm.auto import tqdm
 import torch
 from torch import nn as nn
@@ -303,7 +304,7 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
 
 @ex.automain
 def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, use_subset, _seed, _run):
-
+    os.system('nvidia-smi -q | grep UUID')
     pyro.set_rng_seed(_seed)
     torch.manual_seed(_seed)
     np.random.seed(_seed)
