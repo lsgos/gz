@@ -9,6 +9,7 @@ from torch import nn as nn
 from torch.nn import functional as F
 from torchvision import datasets
 from torchvision import transforms as tvt
+from kornia.augmentation import RandomRotation
 from construct_vae import PoseVAE
 from sacred import Experiment
 from pyro.infer import Trace_ELBO
@@ -40,7 +41,7 @@ run_local = False
 
 @ex.config
 def config():
-    dir_name = "sample_100s_semi_sup_1200_"
+    dir_name = "fashion_bar"
     cuda = True
     num_epochs = 200
     semi_supervised = True
@@ -61,16 +62,19 @@ def config():
     split_early = False
     use_pose_encoder = True # should also add an option to use a pretrained model
     classify_from_z = False
-    pretrain_epochs = 50
-    transform_spec = ["Rotation"]
-    dataset = "gz"
+    pretrain_epochs = 2
+    transform_spec = ["Translation", "Rotation"]
+    dataset = "FashionMNIST"
     img_size = 32 if dataset == "FashionMNIST" else 128
     acquisition = "BALD"
     pixel_likelihood= 'laplace'
     spatial_vae = False
     data_aug = True
     spatial_transformer = False
-
+    train_vae_only = False
+    vae_checkpoint = None
+    
+    
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -152,7 +156,7 @@ def get_datasets(dataset):
         return f()
     else:
         raise NotImplementedError(
-            f"Unknown dataset {dataset}, avaliable options are {set(datasets.keys())}"
+            f"Unk;/nown dataset {dataset}, avaliable options are {set(datasets.keys())}"
         )
 
 
@@ -253,7 +257,7 @@ def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_propor
     )
 
 
-    len_data = len(data)
+    len_data = len(data_train)
     num_tests = int(len_data * test_proportion)
     test_indices = list(i for i in range(0, num_tests))
     train_indices = list(i for i in range(num_tests, len_data))
@@ -312,7 +316,7 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
 
 
 @ex.automain
-def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, use_subset, _seed, _run):
+def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, _run):
     os.system('nvidia-smi -q | grep UUID')
     pyro.set_rng_seed(_seed)
     torch.manual_seed(_seed)
@@ -414,29 +418,39 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     )
     print("starting pretraining")
     if use_pose_encoder:
+        if vae_checkpoint is not None:
+            print("loaded checkpoints from: ", vae_checkpoint )
+            vae.encoder.load_state_dict(
+                torch.load(vae_checkpoint + "/encoder.checkpoint"))
+            vae.decoder.load_state_dict(
+                torch.load(vae_checkpoint + "/decoder.checkpoint"))            
+        else:
+            for e in range(pretrain_epochs):
+                lb = []
+                for batch in vae_loader:
+                    if isinstance(batch, dict):
+                        x = batch['image']
+                    else:
+                        x = batch[0]
+                    x = x.cuda()
+                    x = x.to(device=device)
+                    vae_opt.zero_grad()
 
-        # need to pretrain the pose encoder.
-        for e in range(pretrain_epochs):
-            lb = []
-            for batch in vae_loader:
-                if isinstance(batch, dict):
-                    x = batch['image']
-                else:
-                    x = batch[0]
-                x = x.cuda()
-                x = x.to(device=device)
-                vae_opt.zero_grad()
- 
-                loss = (
-                    Trace_ELBO().differentiable_loss(vae.model, vae.guide, x)
-                    / batch_size
-                )
-                loss.backward()
-                vae_opt.step()
-                lb.append(loss.item())
-            print("pretrain epoch", e, "average loss", np.mean(lb))
-    print("done pretraining")
-
+                    loss = (
+                        Trace_ELBO().differentiable_loss(vae.model, vae.guide, x)
+                        / batch_size
+                    )
+                    loss.backward()
+                    vae_opt.step()
+                    lb.append(loss.item())
+                print("pretrain epoch", e, "average loss", np.mean(lb))
+            print("done pretraining")
+    if train_vae_only:
+        print("trying to save checkpoints")
+        torch.save(vae.encoder.state_dict(), "checkpoints/" + dir_name + "/encoder.checkpoint")
+        torch.save(vae.decoder.state_dict(),  "checkpoints/" + dir_name +  "/decoder.checkpoint")
+        print("checkpoints saved to {}".format("checkpoints/" + dir_name))
+        exit()
 
     # todo want a switch on BayesianCNN / PoseVAE here.
     first = True
