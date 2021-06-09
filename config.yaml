@@ -17,6 +17,7 @@ bar_no_bar: False
 batch_size: 10
 crop_size: 128
 img_size: 128
+test_aug: False
 split_early: False
 # description of parameters, order may not be same as above
 # dir_name: directory name where tensorboard plots are saved
