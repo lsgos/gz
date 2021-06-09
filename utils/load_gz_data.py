@@ -43,7 +43,7 @@ class Gz2_data(torch.utils.data.Dataset):
             transforms = tv.transforms.Compose(
             [tv.transforms.CenterCrop(self.crop),
              tv.transforms.Resize(self.resize), tv.transforms.Grayscale(),
-             tv.transforms.RandomRotation(180, interpolation=tv.transformsInterpolationMode.BILINEAR),
+             tv.transforms.RandomRotation(180),
              tv.transforms.ToTensor()])
         else:
             transforms = tv.transforms.Compose(

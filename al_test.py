@@ -528,11 +528,12 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 class_pred = prediction.max(1)[1]
                 if len(target.shape) > 1:
                     class_true = target.argmax(-1)
+                else:
+                    class_true = target
                 correct += class_pred.eq(class_true.view_as(class_pred)).sum().item()
-
+                
                 # calculate RMSE between predictions and target.
-                emp_probs = target / target.sum(-1, keepdim=True)
-
+                emp_probs = target.float() / target.float().sum(-1, keepdim=True)
                 pred_prob = torch.exp(prediction)
                 loss += D.Multinomial(probs=pred_prob).log_prob(target).sum().item()
                 assert emp_probs.shape[-1] == 2
