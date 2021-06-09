@@ -235,7 +235,7 @@ def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_propor
         ],
     }
 
-    data = Gz2_data(
+    data_train = Gz2_data(
         csv_dir=csv_file,
         image_dir=img_file,
         list_of_interest=ans[bar_no_bar],
@@ -243,13 +243,22 @@ def get_gz_data(csv_file, img_file, bar_no_bar, img_size, crop_size, test_propor
         resize=crop_size,
         data_aug=data_aug
     )
+    data_test = Gz2_data(
+        csv_dir=csv_file,
+        image_dir=img_file,
+        list_of_interest=ans[bar_no_bar],
+        crop=img_size,
+        resize=crop_size,
+        data_aug=False
+    )
+
 
     len_data = len(data)
     num_tests = int(len_data * test_proportion)
     test_indices = list(i for i in range(0, num_tests))
     train_indices = list(i for i in range(num_tests, len_data))
-    test_set = torch.utils.data.Subset(data, test_indices)
-    train_set = torch.utils.data.Subset(data, train_indices)
+    test_set = torch.utils.data.Subset(data_test, test_indices)
+    train_set = torch.utils.data.Subset(data_train, train_indices)
     return train_set, test_set
 
 @ex.capture
