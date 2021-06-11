@@ -64,7 +64,7 @@ def config():
     split_early = False
     use_pose_encoder = True # should also add an option to use a pretrained model
     classify_from_z = False
-    pretrain_epochs = 0
+    pretrain_epochs = 100
     transform_spec = ["Translation", "Rotation"]
     dataset = "FashionMNIST"
     img_size = 32 if dataset == "FashionMNIST" else 128
@@ -160,6 +160,20 @@ def get_datasets(dataset, data_aug):
         raise NotImplementedError(
             f"Unk;/nown dataset {dataset}, avaliable options are {set(datasets.keys())}"
         )
+
+
+class TensorDatasetWithTransform(torch.utils.data.TensorDataset):
+    """
+    Variant of TensorDataset which allows applying a transform to the first tensor while indexing.
+    """
+    def __init__(self, *tensors, transform=lambda x: x):
+        super().__init__(*tensors)
+        self.transform = transform
+
+    def __getitem__(self, i):
+        x, *rest = super().__getitem__(i)
+        return self.transform(x), *rest
+
 @ex.capture
 def get_fashionMNIST(dataset, data_aug):
     train_dataset = datasets.FashionMNIST(
@@ -170,10 +184,8 @@ def get_fashionMNIST(dataset, data_aug):
     )
 
     # want to create a rotated dataset but not by resampling rotations randomly, as this kind of screws up the active learning argument.
-    if data_aug:
-        transform = RandomRotation(180)
-    else:
-        transform = RandomRotation(0)
+    transform = RandomRotation(180)
+    transform = RandomRotation(0)
     td = train_dataset.data[:, None, ...].float() / 255
     vd = test_dataset.data[:, None, ...].float() / 255
 
@@ -186,8 +198,12 @@ def get_fashionMNIST(dataset, data_aug):
 
     td = F.pad(td, (2, 2, 2, 2))
     vd = F.pad(vd, (2, 2, 2, 2))
-    tds = torch.utils.data.TensorDataset(td, tt)
-    vds = torch.utils.data.TensorDataset(vd, vt)
+    if data_aug:
+        tds = TensorDatasetWithTransform(td, tt, transform=tvt.Compose([tvt.ToPILImage(), tvt.RandomRotation(180), tvt.ToTensor()]))
+        vds = TensorDatasetWithTransform(vd, vt, transform=tvt.Compose([tvt.ToPILImage(), tvt.RandomRotation(180), tvt.ToTensor()]))
+    else:
+        tds = torch.utils.data.TensorDataset(td, tt)
+        vds = torch.utils.data.TensorDataset(vd, vt)
 
     tds.data = tds.tensors[0]
     tds.targets = tds.tensors[1]
@@ -416,7 +432,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
     vae, _ = get_model()
     vae_opt = torch.optim.Adam(vae.parameters(), lr=lr)
-    vae_loader = train_dataset_aug
+    vae_loader = torch.utils.data.DataLoader(train_dataset_aug, batch_size=batch_size, shuffle=True)
     print("starting pretraining")
     if use_pose_encoder:
         if vae_checkpoint is not None:
