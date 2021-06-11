@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --cpus-per-task=10
 #SBATCH --gres=gpu:1
-#SBATCH --job-name="gz"
-#SBATCH --array=0-320%8
+#SBATCH --job-name="fash_test"
+#SBATCH --array=0-3%10
 #SBATCH	--exclude="oat1"
 export CONDA_ENVS_PATH=/scratch-ssd/$USER/conda_envs
 export CONDA_PKGS_DIRS=/scratch-ssd/$USER/conda_pkgs
@@ -15,13 +15,13 @@ source /scratch-ssd/oatml/miniconda3/bin/activate gz_by_hand
 # manually install a version of this package without the stupid progress bars everywhere.
 
 #pip -e batchbald_redux
-ACQUISITIONS=(random BALD)
+ACQUISITIONS=(BALD random)
 ENCODER=(True False)
-DATA_AUG=(True False)
-SPATIAL_TRANSFORMER=(True False)
-SPATIAL_VAE=(True False)
-BAR_NO_BAR=(False True)
-N_SEEDS=5
+DATA_AUG=(True)
+SPATIAL_TRANSFORMER=(False)
+SPATIAL_VAE=(False)
+BAR_NO_BAR=(True)
+N_SEEDS=1
 N_ACQUISITIONS=${#ACQUISITIONS[@]}
 N_ENCODER=${#ENCODER[@]}
 N_BAR=${#BAR_NO_BAR[@]}
@@ -38,14 +38,6 @@ SPATIAL_VAE_IDX=$(( (SLURM_ARRAY_TASK_ID / (N_ACQUISITIONS * N_SEEDS * N_DATA_AU
 
 nvidia-smi -q | grep UUID
 
-COMPLETED_TASKS=(122 114 31 105 117 110 87 126 70 113 106 123 104 47 58 111 99 102 10 116 119 109 98 101 120 108 100 107 15 45 11 19 127 118 18 24 25 121 56 115 14 22 26 112 103)
-
-declare -A array
-for n in ${COMPLETED_TASKS[@]}
-do
-    array[$n]=1
-done
-
 
 # ENCODER must be TRUE for Spatial vae and spatial transformer
 if [[ ${SPATIAL_TRANSFORMER[$SPATIAL_TRANSFORMER_IDX]} == True ]] && [[ ${ENCODER[$ENCODER_IDX]} == False ]]; then
@@ -54,10 +46,8 @@ elif [[ ${SPATIAL_VAE[$SPATIAL_VAE_IDX]} == True ]] && [[ ${ENCODER[$ENCODER_IDX
     echo SKIPPING
 elif [[ ${SPATIAL_VAE[$SPATIAL_VAE_IDX]} == True ]] && [[ ${SPATIAL_TRANSFORMER[$SPATIAL_TRANSFORMER_IDX]} == True ]]; then
     echo SKIPPING
-elif [[  ${array[$SLURM_ARRAY_TASK_ID]}  ]]; then
-     echo SKIPPING
 else
-    srun python -u al_test.py with 'dataset=gz' \
+    srun python -u al_test.py with 'dataset=FashionMNIST' \
 	 bar_no_bar=${BAR_NO_BAR[$BAR_IDX]} \
 	 use_pose_encoder=${ENCODER[$ENCODER_IDX]} \
 	 seed=$SEED \
@@ -69,6 +59,7 @@ else
 	 'transform_spec=["Translation", "Rotation"]' \
 	 classify_from_z=False \
 	 pixel_likelihood=laplace \
-	 -F output_rmse_fixed
+	 'vae_checkpoint=checkpoints/fashion_bar' \
+	 -F output_rmse_fixed_fashion
 fi
  
