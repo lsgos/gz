@@ -525,26 +525,27 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                     log_preds, dim=1
                 ) - math.log(num_test_inference_samples)
                 # loss += F.nll_loss(prediction, target, reduction="sum")
+                if dataset == 'gz':
+                    class_pred = prediction.max(1)[1]
+                    if len(target.shape) > 1:
+                        class_true = target.argmax(-1)
+                    else:
+                        class_true = target
+                    correct += class_pred.eq(class_true.view_as(class_pred)).sum().item()
 
-                class_pred = prediction.max(1)[1]
-                if len(target.shape) > 1:
-                    class_true = target.argmax(-1)
-                else:
-                    class_true = target
-                correct += class_pred.eq(class_true.view_as(class_pred)).sum().item()
-
-                # calculate RMSE between predictions and target.
-                emp_probs = target.float() / target.float().sum(-1, keepdim=True)
-                pred_prob = torch.exp(prediction)
-                import pdb
-                pdb.set_trace()
-
-                loss = get_classification_loss(dataset)
-                loss += D.Multinomial(probs=pred_prob).log_prob(target).sum().item()
-                assert emp_probs.shape[-1] == 2
-                ep = emp_probs[..., 0]
-                pp = pred_prob[..., 0]
-                mse += ((ep - pp) **2).sum().item()
+                    # calculate RMSE between predictions and target.
+                    emp_probs = target.float() / target.float().sum(-1, keepdim=True)
+                    pred_prob = torch.exp(prediction)
+                    loss += loss_fn(prediction, target) * target.shape[0]  # loss_fn takes mean, but we want the sum.
+                    assert emp_probs.shape[-1] == 2
+                    ep = emp_probs[..., 0]
+                    pp = pred_prob[..., 0]
+                    mse += ((ep - pp) **2).sum().item()
+                elif dataset == 'FashionMNIST':
+                    class_pred = prediction.max(1)[1]
+                    correct += (class_pred == target).float().sum(-1).item()
+                    loss += loss_fn(prediction, target).item() * target.shape[0]
+                    mse += 0
 
         # double check scaling here.
         loss /= len(test_loader.dataset)
