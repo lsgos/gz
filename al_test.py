@@ -37,12 +37,14 @@ ex = Experiment()
 
 local_csv_loc = "~/diss/gz2_data/gz_amended.csv"
 local_img_loc = "~/diss/gz2_data/"
-run_local = False
+local_fashion_loc = "~/diss/"
+run_local = True
+fashion_loc = local_fashion_loc if run_local else "/scratch/"
 
 @ex.config
 def config():
     dir_name = "fashion_bar"
-    cuda = True
+    cuda = False
     num_epochs = 200
     semi_supervised = True
     split_early = False
@@ -62,7 +64,7 @@ def config():
     split_early = False
     use_pose_encoder = True # should also add an option to use a pretrained model
     classify_from_z = False
-    pretrain_epochs = 2
+    pretrain_epochs = 100
     transform_spec = ["Translation", "Rotation"]
     dataset = "FashionMNIST"
     img_size = 32 if dataset == "FashionMNIST" else 128
@@ -73,8 +75,8 @@ def config():
     spatial_transformer = False
     train_vae_only = False
     vae_checkpoint = None
-    
-    
+
+
 class BayesianCNN(consistent_mc_dropout.BayesianModule):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -149,7 +151,7 @@ class FCNN(consistent_mc_dropout.BayesianModule):
         return self.body(x)
 
 @ex.capture
-def get_datasets(dataset):
+def get_datasets(dataset, data_aug):
     datasets = {"FashionMNIST": get_fashionMNIST, "gz": get_gz_data}
     f = datasets.get(dataset)
     if f is not None:
@@ -160,16 +162,30 @@ def get_datasets(dataset):
         )
 
 
-def get_fashionMNIST():
+class TensorDatasetWithTransform(torch.utils.data.TensorDataset):
+    """
+    Variant of TensorDataset which allows applying a transform to the first tensor while indexing.
+    """
+    def __init__(self, *tensors, transform=lambda x: x):
+        super().__init__(*tensors)
+        self.transform = transform
+
+    def __getitem__(self, i):
+        x, *rest = super().__getitem__(i)
+        return self.transform(x), *rest
+
+@ex.capture
+def get_fashionMNIST(dataset, data_aug):
     train_dataset = datasets.FashionMNIST(
-        "/scratch-ssd/oatml/data/", download=True, train=True, transform=tvt.ToTensor()
+        fashion_loc, download=True, train=True, transform=tvt.ToTensor()
     )
     test_dataset = datasets.FashionMNIST(
-        "/scratch-ssd/oatml/data", download=True, train=False, transform=tvt.ToTensor()
+        fashion_loc, download=True, train=False, transform=tvt.ToTensor()
     )
 
     # want to create a rotated dataset but not by resampling rotations randomly, as this kind of screws up the active learning argument.
     transform = RandomRotation(180)
+    transform = RandomRotation(0)
     td = train_dataset.data[:, None, ...].float() / 255
     vd = test_dataset.data[:, None, ...].float() / 255
 
@@ -182,8 +198,12 @@ def get_fashionMNIST():
 
     td = F.pad(td, (2, 2, 2, 2))
     vd = F.pad(vd, (2, 2, 2, 2))
-    tds = torch.utils.data.TensorDataset(td, tt)
-    vds = torch.utils.data.TensorDataset(vd, vt)
+    if data_aug:
+        tds = TensorDatasetWithTransform(td, tt, transform=tvt.Compose([tvt.ToPILImage(), tvt.RandomRotation(180), tvt.ToTensor()]))
+        vds = TensorDatasetWithTransform(vd, vt, transform=tvt.Compose([tvt.ToPILImage(), tvt.RandomRotation(180), tvt.ToTensor()]))
+    else:
+        tds = torch.utils.data.TensorDataset(td, tt)
+        vds = torch.utils.data.TensorDataset(vd, vt)
 
     tds.data = tds.tensors[0]
     tds.targets = tds.tensors[1]
@@ -316,7 +336,7 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
 
 
 @ex.automain
-def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, _run):
+def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, cuda, data_aug, _run):
     os.system('nvidia-smi -q | grep UUID')
     pyro.set_rng_seed(_seed)
     torch.manual_seed(_seed)
@@ -324,14 +344,15 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     # torch.set_deterministic(True)
     torch.backends.cudnn.benchmark = False
     print(_seed)
-    train_dataset, test_dataset = get_datasets()
+    train_dataset_aug, test_dataset = get_datasets(dataset, data_aug)
+    train_dataset_no_aug, test_dataset = get_datasets(dataset, False)
     assert acquisition in {"BALD", "random"}, f"Unknown acquisition {acquisition}"
 
 
     # sanity for initial training
     if use_subset:
         # purely for iteration purposes, train on a manageable subset of the data
-        train_dataset = torch.utils.data.Subset(train_dataset, torch.arange(60000))
+        train_dataset_aug = torch.utils.data.Subset(train_dataset_aug, torch.arange(60000))
 
     num_initial_samples = 512 if bar_no_bar else 256
     num_classes = 10
@@ -341,7 +362,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         # in this case getting initial samples is slightly complicated by the fact that galaxy zoo does not have
         # strict labels.
         # Compromise by balancing as though the arg-max of the votes is a label, which should be a pretty good proxy.
-        labels = [x['data'].argmax(-1) for x in train_dataset]
+        labels = [x['data'].argmax(-1) for x in train_dataset_no_aug]
         num_classes = 2 #  if bar_no_bar else 3
         initial_samples = active_learning.get_balanced_sample_indices(
             labels,
@@ -350,7 +371,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         )
     else:
         initial_samples = active_learning.get_balanced_sample_indices(
-            repeated_mnist.get_targets(train_dataset),
+            repeated_mnist.get_targets(train_dataset_no_aug),
             num_classes=num_classes,
             n_per_digit=num_initial_samples / num_classes,
         )
@@ -366,34 +387,32 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     scoring_batch_size = 32
     training_iterations = 4096 * 16
 
-    use_cuda = torch.cuda.is_available()
-    use_cuda = True
-    print(f"use_cuda: {use_cuda}")
-
-    device = "cuda" if use_cuda else "cpu"
-
-    kwargs = {"num_workers": 1, "pin_memory": True} if use_cuda else {}
+    device = "cuda" if cuda else "cpu"
+    print("device: {}".format(device))
+    kwargs = {"num_workers": 1, "pin_memory": True} if cuda else {}
 
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=test_batch_size, shuffle=False, **kwargs
     )
 
-    active_learning_data = active_learning.ActiveLearningData(train_dataset)
+    active_learning_data = active_learning.ActiveLearningData(train_dataset_no_aug)
+    active_learning_data_aug = active_learning.ActiveLearningData(train_dataset_aug)
 
     # Split off the initial samples first.
     active_learning_data.acquire(initial_samples)
+    active_learning_data_aug.acquire(initial_samples)
 
-    train_loader = torch.utils.data.DataLoader(
-        active_learning_data.training_dataset,
+    train_loader_aug = torch.utils.data.DataLoader(
+        active_learning_data_aug.training_dataset,
         sampler=active_learning.RandomFixedLengthSampler(
-            active_learning_data.training_dataset, training_iterations
+            active_learning_data_aug.training_dataset, training_iterations
         ),
         batch_size=batch_size,
         **kwargs,
     )
 
-    pool_loader = torch.utils.data.DataLoader(
-        active_learning_data.pool_dataset,
+    pool_loader_aug = torch.utils.data.DataLoader(
+        active_learning_data_aug.pool_dataset,
         batch_size=scoring_batch_size,
         shuffle=False,
         **kwargs,
@@ -413,9 +432,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
     vae, _ = get_model()
     vae_opt = torch.optim.Adam(vae.parameters(), lr=lr)
-    vae_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
-    )
+    vae_loader = torch.utils.data.DataLoader(train_dataset_aug, batch_size=batch_size, shuffle=True)
     print("starting pretraining")
     if use_pose_encoder:
         if vae_checkpoint is not None:
@@ -423,7 +440,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
             vae.encoder.load_state_dict(
                 torch.load(vae_checkpoint + "/encoder.checkpoint"))
             vae.decoder.load_state_dict(
-                torch.load(vae_checkpoint + "/decoder.checkpoint"))            
+                torch.load(vae_checkpoint + "/decoder.checkpoint"))
         else:
             for e in range(pretrain_epochs):
                 lb = []
@@ -432,8 +449,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                         x = batch['image']
                     else:
                         x = batch[0]
-                    x = x.cuda()
-                    x = x.to(device=device)
+                    x = x.to(device)
                     vae_opt.zero_grad()
 
                     loss = (
@@ -450,14 +466,14 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         torch.save(vae.encoder.state_dict(), "checkpoints/" + dir_name + "/encoder.checkpoint")
         torch.save(vae.decoder.state_dict(),  "checkpoints/" + dir_name +  "/decoder.checkpoint")
         print("checkpoints saved to {}".format("checkpoints/" + dir_name))
-        exit()
+        return
 
     # todo want a switch on BayesianCNN / PoseVAE here.
     first = True
     model = get_classification_model()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     loss_fn = get_classification_loss()
-    model.cuda()
+    model.to(device)
     model.train()
     while True:
 
@@ -467,7 +483,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         lb = []
         model.train()
         for _ in range(n_repeats):
-            for batch in train_loader:
+            for batch in train_loader_aug:
 
                 if isinstance(batch, dict):
                     data = batch['image']
@@ -524,22 +540,27 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                     log_preds, dim=1
                 ) - math.log(num_test_inference_samples)
                 # loss += F.nll_loss(prediction, target, reduction="sum")
+                if dataset == 'gz':
+                    class_pred = prediction.max(1)[1]
+                    if len(target.shape) > 1:
+                        class_true = target.argmax(-1)
+                    else:
+                        class_true = target
+                    correct += class_pred.eq(class_true.view_as(class_pred)).sum().item()
 
-                class_pred = prediction.max(1)[1]
-                if len(target.shape) > 1:
-                    class_true = target.argmax(-1)
-                else:
-                    class_true = target
-                correct += class_pred.eq(class_true.view_as(class_pred)).sum().item()
-                
-                # calculate RMSE between predictions and target.
-                emp_probs = target.float() / target.float().sum(-1, keepdim=True)
-                pred_prob = torch.exp(prediction)
-                loss += D.Multinomial(probs=pred_prob).log_prob(target).sum().item()
-                assert emp_probs.shape[-1] == 2
-                ep = emp_probs[..., 0]
-                pp = pred_prob[..., 0]
-                mse += ((ep - pp) **2).sum().item()
+                    # calculate RMSE between predictions and target.
+                    emp_probs = target.float() / target.float().sum(-1, keepdim=True)
+                    pred_prob = torch.exp(prediction)
+                    loss += loss_fn(prediction, target) * target.shape[0]  # loss_fn takes mean, but we want the sum.
+                    assert emp_probs.shape[-1] == 2
+                    ep = emp_probs[..., 0]
+                    pp = pred_prob[..., 0]
+                    mse += ((ep - pp) **2).sum().item()
+                elif dataset == 'FashionMNIST':
+                    class_pred = prediction.max(1)[1]
+                    correct += (class_pred == target).float().sum(-1).item()
+                    loss += loss_fn(prediction, target).item() * target.shape[0]
+                    mse += 0
 
         # double check scaling here.
         loss /= len(test_loader.dataset)
@@ -573,14 +594,14 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
             logits_N_K_C = torch.empty(
                 (N, num_inference_samples, num_classes),
                 dtype=torch.double,
-                pin_memory=use_cuda,
+                pin_memory=cuda,
             )
 
             with torch.no_grad():
                 model.eval()
 
                 for i, batch in enumerate(
-                    pool_loader
+                    pool_loader_aug
                 ):
 
                     if isinstance(batch, dict):
@@ -592,8 +613,8 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
                     data = preprocess_batch(data, vae)
 
-                    lower = i * pool_loader.batch_size
-                    upper = min(lower + pool_loader.batch_size, N)
+                    lower = i * pool_loader_aug.batch_size
+                    upper = min(lower + pool_loader_aug.batch_size, N)
                     logits_N_K_C[lower:upper].copy_(
                         F.log_softmax(model(data, num_inference_samples).double(), -1), non_blocking=True
                     )
@@ -625,6 +646,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         # print("Labels: ", targets[candidate_batch.indices])
 
         active_learning_data.acquire(candidate_batch.indices)
+        active_learning_data_aug.acquire(candidate_batch.indices)
         added_indices.append(dataset_indices)
         # pbar.update(len(dataset_indices))
     # TODO then after that, sanity the pose encoder a bit.
