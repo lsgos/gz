@@ -37,7 +37,9 @@ ex = Experiment()
 
 local_csv_loc = "~/diss/gz2_data/gz_amended.csv"
 local_img_loc = "~/diss/gz2_data/"
+local_fashion_loc = "~/diss/"
 run_local = True
+fashion_loc = local_fashion_loc if run_local else "/scratch/"
 
 @ex.config
 def config():
@@ -160,10 +162,10 @@ def get_datasets(dataset, do_data_aug):
 
 def get_fashionMNIST(datset, data_aug):
     train_dataset = datasets.FashionMNIST(
-        "~/diss/", download=True, train=True, transform=tvt.ToTensor()
+        fashion_loc, download=True, train=True, transform=tvt.ToTensor()
     )
     test_dataset = datasets.FashionMNIST(
-        "~/diss/", download=True, train=False, transform=tvt.ToTensor()
+        fashion_loc, download=True, train=False, transform=tvt.ToTensor()
     )
 
     # want to create a rotated dataset but not by resampling rotations randomly, as this kind of screws up the active learning argument.
