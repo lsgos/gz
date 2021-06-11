@@ -149,6 +149,7 @@ class FCNN(consistent_mc_dropout.BayesianModule):
         )
     def mc_forward_impl(self, x):
         return self.body(x)
+
 @ex.capture
 def get_datasets(dataset, data_aug):
     datasets = {"FashionMNIST": get_fashionMNIST, "gz": get_gz_data}
@@ -415,9 +416,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
     vae, _ = get_model()
     vae_opt = torch.optim.Adam(vae.parameters(), lr=lr)
-    vae_loader = torch.utils.data.DataLoader(
-        train_loader_aug, batch_size=batch_size, shuffle=True, num_workers=4
-    )
+    vae_loader = train_dataset_aug
     print("starting pretraining")
     if use_pose_encoder:
         if vae_checkpoint is not None:
@@ -451,7 +450,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         torch.save(vae.encoder.state_dict(), "checkpoints/" + dir_name + "/encoder.checkpoint")
         torch.save(vae.decoder.state_dict(),  "checkpoints/" + dir_name +  "/decoder.checkpoint")
         print("checkpoints saved to {}".format("checkpoints/" + dir_name))
-        exit()
+        return
 
     # todo want a switch on BayesianCNN / PoseVAE here.
     first = True
@@ -586,7 +585,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 model.eval()
 
                 for i, batch in enumerate(
-                    pool_loader
+                    pool_loader_aug
                 ):
 
                     if isinstance(batch, dict):
@@ -598,8 +597,8 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
                     data = preprocess_batch(data, vae)
 
-                    lower = i * pool_loader.batch_size
-                    upper = min(lower + pool_loader.batch_size, N)
+                    lower = i * pool_loader_aug.batch_size
+                    upper = min(lower + pool_loader_aug.batch_size, N)
                     logits_N_K_C[lower:upper].copy_(
                         F.log_softmax(model(data, num_inference_samples).double(), -1), non_blocking=True
                     )
