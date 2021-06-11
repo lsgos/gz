@@ -148,19 +148,17 @@ class FCNN(consistent_mc_dropout.BayesianModule):
     def mc_forward_impl(self, x):
         return self.body(x)
 
-@ex.capture
-def get_datasets(dataset, data_aug):
+def get_datasets(dataset, do_data_aug):
     datasets = {"FashionMNIST": get_fashionMNIST, "gz": get_gz_data}
     f = datasets.get(dataset)
     if f is not None:
-        return f(data_aug)
+        return f(dataset, do_data_aug)
     else:
         raise NotImplementedError(
             f"Unk;/nown dataset {dataset}, avaliable options are {set(datasets.keys())}"
         )
 
-@ex.capture
-def get_fashionMNIST(data_aug):
+def get_fashionMNIST(datset, data_aug):
     train_dataset = datasets.FashionMNIST(
         "~/diss/", download=True, train=True, transform=tvt.ToTensor()
     )
@@ -319,7 +317,7 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
 
 
 @ex.automain
-def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, _run):
+def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, cuda, _run):
     os.system('nvidia-smi -q | grep UUID')
     pyro.set_rng_seed(_seed)
     torch.manual_seed(_seed)
@@ -327,15 +325,15 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     # torch.set_deterministic(True)
     torch.backends.cudnn.benchmark = False
     print(_seed)
-    train_dataset_aug, test_dataset = get_datasets(True)
-    train_dataset_no_aug, test_dataset = get_datasets(False)
+    train_dataset_aug, test_dataset = get_datasets(dataset, True)
+    train_dataset_no_aug, test_dataset = get_datasets(dataset, False)
     assert acquisition in {"BALD", "random"}, f"Unknown acquisition {acquisition}"
 
 
     # sanity for initial training
     if use_subset:
         # purely for iteration purposes, train on a manageable subset of the data
-        train_dataset = torch.utils.data.Subset(train_dataset_aug, torch.arange(60000))
+        train_dataset_aug = torch.utils.data.Subset(train_dataset_aug, torch.arange(60000))
 
     num_initial_samples = 512 if bar_no_bar else 256
     num_classes = 10
@@ -370,9 +368,9 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     scoring_batch_size = 32
     training_iterations = 4096 * 16
 
-    device = "cuda" if use_cuda else "cpu"
+    device = "cuda" if cuda else "cpu"
     print("device: {}".format(device))
-    kwargs = {"num_workers": 1, "pin_memory": True} if use_cuda else {}
+    kwargs = {"num_workers": 1, "pin_memory": True} if cuda else {}
 
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=test_batch_size, shuffle=False, **kwargs
@@ -416,7 +414,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     vae, _ = get_model()
     vae_opt = torch.optim.Adam(vae.parameters(), lr=lr)
     vae_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
+        train_loader_aug, batch_size=batch_size, shuffle=True, num_workers=4
     )
     print("starting pretraining")
     if use_pose_encoder:
@@ -579,7 +577,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
             logits_N_K_C = torch.empty(
                 (N, num_inference_samples, num_classes),
                 dtype=torch.double,
-                pin_memory=use_cuda,
+                pin_memory=cuda,
             )
 
             with torch.no_grad():
