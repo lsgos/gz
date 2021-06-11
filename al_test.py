@@ -149,18 +149,18 @@ class FCNN(consistent_mc_dropout.BayesianModule):
         )
     def mc_forward_impl(self, x):
         return self.body(x)
-
-def get_datasets(dataset, do_data_aug):
+@ex.capture
+def get_datasets(dataset, data_aug):
     datasets = {"FashionMNIST": get_fashionMNIST, "gz": get_gz_data}
     f = datasets.get(dataset)
     if f is not None:
-        return f(dataset, do_data_aug)
+        return f()
     else:
         raise NotImplementedError(
             f"Unk;/nown dataset {dataset}, avaliable options are {set(datasets.keys())}"
         )
-
-def get_fashionMNIST(datset, data_aug):
+@ex.capture
+def get_fashionMNIST(dataset, data_aug):
     train_dataset = datasets.FashionMNIST(
         fashion_loc, download=True, train=True, transform=tvt.ToTensor()
     )
@@ -319,7 +319,7 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
 
 
 @ex.automain
-def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, cuda, _run):
+def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition, train_vae_only, dir_name, vae_checkpoint, use_subset, _seed, cuda, data_aug, _run):
     os.system('nvidia-smi -q | grep UUID')
     pyro.set_rng_seed(_seed)
     torch.manual_seed(_seed)
@@ -327,7 +327,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
     # torch.set_deterministic(True)
     torch.backends.cudnn.benchmark = False
     print(_seed)
-    train_dataset_aug, test_dataset = get_datasets(dataset, True)
+    train_dataset_aug, test_dataset = get_datasets(dataset, data_aug)
     train_dataset_no_aug, test_dataset = get_datasets(dataset, False)
     assert acquisition in {"BALD", "random"}, f"Unknown acquisition {acquisition}"
 
