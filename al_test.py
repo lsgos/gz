@@ -185,7 +185,6 @@ def get_fashionMNIST(dataset, data_aug):
 
     # want to create a rotated dataset but not by resampling rotations randomly, as this kind of screws up the active learning argument.
     transform = RandomRotation(180)
-    transform = RandomRotation(0)
     td = train_dataset.data[:, None, ...].float() / 255
     vd = test_dataset.data[:, None, ...].float() / 255
 
