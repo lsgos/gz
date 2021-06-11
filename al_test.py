@@ -317,7 +317,7 @@ def get_classification_loss(dataset):
         return F.nll_loss
 
 @ex.capture
-def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
+def preprocess_batch(data, dataset, vae, use_pose_encoder, classify_from_z):
     """
     depending on the configuration, either just normalise the data, or pass it through a VAE or similar
     """
@@ -329,8 +329,9 @@ def preprocess_batch(data, vae, use_pose_encoder, classify_from_z):
         else:
             data = enc_output["view"]  # learned transform of the data.
     else:
-        data = data - 0.222 # lol this complicates switching datasets severely
-        data = data / 0.156
+        if dataset=="gz":
+            data = data - 0.222 # lol this complicates switching datasets severely
+            data = data / 0.156
     return data
 
 
