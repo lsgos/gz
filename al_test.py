@@ -38,13 +38,13 @@ ex = Experiment()
 local_csv_loc = "~/diss/gz2_data/gz_amended.csv"
 local_img_loc = "~/diss/gz2_data/"
 local_fashion_loc = "~/diss/"
-run_local = True
-fashion_loc = local_fashion_loc if run_local else "/scratch/"
+run_local = False
+fashion_loc = local_fashion_loc if run_local else "/scratch-ssd/oatml/data/"
 
 @ex.config
 def config():
     dir_name = "fashion_bar"
-    cuda = False
+    cuda = True
     num_epochs = 200
     semi_supervised = True
     split_early = False
@@ -182,7 +182,6 @@ def get_fashionMNIST(dataset, data_aug):
     test_dataset = datasets.FashionMNIST(
         fashion_loc, download=True, train=False, transform=tvt.ToTensor()
     )
-
     # want to create a rotated dataset but not by resampling rotations randomly, as this kind of screws up the active learning argument.
     transform = RandomRotation(180)
     td = train_dataset.data[:, None, ...].float() / 255
@@ -317,7 +316,7 @@ def get_classification_loss(dataset):
         return F.nll_loss
 
 @ex.capture
-def preprocess_batch(data, dataset, vae, use_pose_encoder, classify_from_z):
+def preprocess_batch(data, dataset, use_pose_encoder, classify_from_z, vae=None):
     """
     depending on the configuration, either just normalise the data, or pass it through a VAE or similar
     """
@@ -494,7 +493,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
                 data = data.to(device=device)
                 target = target.to(device=device)
-                data = preprocess_batch(data, vae)
+                data = preprocess_batch(data, vae=vae)
 
                 optimizer.zero_grad()
 
@@ -532,7 +531,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 data = data.to(device=device)
                 target = target.to(device=device)
 
-                data = preprocess_batch(data, vae)
+                data = preprocess_batch(data, vae=vae)
 
                 model_out = model(data, num_test_inference_samples)
                 log_preds = F.log_softmax(model(data, num_test_inference_samples), -1)
@@ -611,7 +610,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
                     data = data.to(device=device)
 
-                    data = preprocess_batch(data, vae)
+                    data = preprocess_batch(data, vae=vae)
 
                     lower = i * pool_loader_aug.batch_size
                     upper = min(lower + pool_loader_aug.batch_size, N)
@@ -637,6 +636,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
             dataset_indices = active_learning_data.get_dataset_indices(
                 candidate_batch.indices
             )
+
 
         # targets = repeated_mnist.get_targets(active_learning_data.pool_dataset)
 
