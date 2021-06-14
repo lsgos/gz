@@ -409,9 +409,10 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         batch_size=batch_size,
         **kwargs,
     )
-
-    pool_loader_aug = torch.utils.data.DataLoader(
-        active_learning_data_aug.pool_dataset,
+    # not sure if the pool_loader should be augmented for not but removed
+    # aug as seen below and got the same results
+    pool_loader = torch.utils.data.DataLoader(
+        active_learning_data.pool_dataset,
         batch_size=scoring_batch_size,
         shuffle=False,
         **kwargs,
@@ -600,7 +601,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                 model.eval()
 
                 for i, batch in enumerate(
-                    pool_loader_aug
+                    pool_loader
                 ):
 
                     if isinstance(batch, dict):
@@ -612,8 +613,8 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
 
                     data = preprocess_batch(data, vae=vae)
 
-                    lower = i * pool_loader_aug.batch_size
-                    upper = min(lower + pool_loader_aug.batch_size, N)
+                    lower = i * pool_loader.batch_size
+                    upper = min(lower + pool_loader.batch_size, N)
                     logits_N_K_C[lower:upper].copy_(
                         F.log_softmax(model(data, num_inference_samples).double(), -1), non_blocking=True
                     )
