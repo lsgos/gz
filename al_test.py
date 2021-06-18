@@ -517,9 +517,9 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         # print('train loss:',  np.mean(lb))
         _run.log_scalar('train.loss', np.mean(lb))
         # Test
-        loss = 0
-        correct = 0
-        mse = 0
+        loss = 0.0
+        correct = 0.0
+        mse = 0.0
         with torch.no_grad():
             for batch in test_loader:
                 if isinstance(batch, dict):
@@ -551,7 +551,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
                     # calculate RMSE between predictions and target.
                     emp_probs = target.float() / target.float().sum(-1, keepdim=True)
                     pred_prob = torch.exp(prediction)
-                    loss += loss_fn(prediction, target) * target.shape[0]  # loss_fn takes mean, but we want the sum.
+                    loss += (loss_fn(prediction, target) * target.shape[0]).float()  # loss_fn takes mean, but we want the sum.
                     assert emp_probs.shape[-1] == 2
                     ep = emp_probs[..., 0]
                     pp = pred_prob[..., 0]
@@ -573,7 +573,7 @@ def main(use_pose_encoder, pretrain_epochs, dataset, lr, bar_no_bar, acquisition
         rmse = math.sqrt(mse)
         test_rmse.append(rmse)
 
-
+        loss = loss.float()
         assert type(loss) == float # double check these aren't torch tensors - this screws up storage
         assert type(rmse) == float
         _run.log_scalar("test.average_loss", loss)
